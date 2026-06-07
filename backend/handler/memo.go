@@ -370,7 +370,8 @@ func (m MemoHandler) SaveMemo(c echo.Context) error {
 
 	// 处理自定义时间
 	if req.CreatedAt != nil {
-		*memo.CreatedAt = req.CreatedAt.Local()
+		createdAt := req.CreatedAt.Local()
+		memo.CreatedAt = &createdAt
 	}
 
 	m.base.db.Save(&memo)

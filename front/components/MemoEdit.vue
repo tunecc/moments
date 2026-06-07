@@ -8,7 +8,7 @@
       </NuxtLink>
       <UButton @click="saveMemo">发表</UButton>
     </div>
-    <div class="flex gap-2 text-lg text-gray-600 pt-4 ">
+    <div class="flex flex-wrap gap-2 text-lg text-gray-600 pt-4 ">
       <ExternalUrl v-model:favicon="state.externalFavicon" v-model:title="state.externalTitle"
                    v-model:url="state.externalUrl"/>
 
@@ -17,16 +17,29 @@
       <upload-video @confirm="handleVideo" v-bind="state.video"/>
       <douban-edit v-model:type="doubanType" v-model:data="doubanData"/>
       <UPopover :popper="{ arrow: true }" mode="click">
-        <UIcon name="i-carbon-calendar" class="w-6 h-6" title="自定义时间"/>
+        <button
+          type="button"
+          class="flex items-center gap-1 text-sm text-gray-600 hover:text-gray-900"
+          :title="createdAtTitle"
+        >
+          <UIcon name="i-carbon-calendar" class="w-6 h-6"/>
+          <span class="max-w-40 truncate">{{ createdAtLabel }}</span>
+        </button>
         <template #panel="{close}">
-          <DatePicker
-            v-model="state.createdAt"
-            mode="datetime"
-            is24hr
-            :time-accuracy="2"
-            :rules="{ seconds: 0 }"
-            @close="close"
-          />
+          <div class="p-3 space-y-3">
+            <DatePicker
+              v-model="state.createdAt"
+              mode="datetime"
+              is24hr
+              :time-accuracy="2"
+              :rules="{ seconds: 0 }"
+              @close="close"
+            />
+            <div class="flex justify-end gap-2">
+              <UButton size="xs" color="white" variant="solid" @click="resetCreatedAt(close)">恢复当前时间</UButton>
+              <UButton size="xs" @click="close()">确定</UButton>
+            </div>
+          </div>
         </template>
       </UPopover>
       <UIcon name="i-carbon-text-clear-format" @click="reset" class="w-6 h-6 cursor-pointer" title="清空"></UIcon>
@@ -121,7 +134,7 @@ const contentRef = ref(null)
 const props = defineProps<{ id?: number }>()
 const defaultState = {
   id: props.id || 0,
-  createdAt: '' as string,
+  createdAt: undefined as string | Date | undefined,
   content: "",
   ext: "",
   pinned: false,
@@ -171,6 +184,26 @@ const state = reactive({
 const existTags = ref<string[]>([])
 const reset = () => {
   Object.assign(state, defaultState)
+}
+
+const normalizeCreatedAt = (value?: string | Date) => {
+  const parsed = value ? dayjs(value) : dayjs()
+  return parsed.isValid() ? parsed.format() : dayjs().format()
+}
+
+const createdAtLabel = computed(() => {
+  if (!state.createdAt) {
+    return "当前时间"
+  }
+  const parsed = dayjs(state.createdAt)
+  return parsed.isValid() ? parsed.format("YYYY-MM-DD HH:mm") : "当前时间"
+})
+
+const createdAtTitle = computed(() => state.createdAt ? "自定义发布时间" : "使用当前时间")
+
+const resetCreatedAt = (close?: () => void) => {
+  state.createdAt = undefined
+  close?.()
 }
 
 const locationLabel = computed(() => {
@@ -290,7 +323,7 @@ const saveMemo = async () => {
     imgs: state.imgs.split(",").filter(Boolean),
     location: state.location,
     tags: selectedLabel.value,
-    createdAt: state.createdAt || dayjs().format(),
+    createdAt: normalizeCreatedAt(state.createdAt),
   })
   toast.success("保存成功!")
   await navigateTo('/')
