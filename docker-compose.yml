@@ -1,6 +1,6 @@
 services:
   moments:
-    image: kingwrcy/moments:latest
+    image: ghcr.io/tunecc/moments:latest
     container_name: moments
     restart: always
     environment:
