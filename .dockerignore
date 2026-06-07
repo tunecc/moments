@@ -1,0 +1,13 @@
+.git
+.github
+.DS_Store
+
+backend/dist
+backend/public
+
+front/.nuxt
+front/.output
+front/dist
+front/node_modules
+
+node_modules
