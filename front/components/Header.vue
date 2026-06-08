@@ -5,12 +5,11 @@
   >
     <div
       v-if="$route.path !== '/' && $route.path.indexOf('/memo/') < 0"
-      :class="{ 'bg-[#4c4c4c]/80 z-10': y > 100 }"
-      class="flex fixed justify-between items-center p-4 w-full md:w-[567px] text-white top-0"
+      class="fixed top-0 z-30 flex w-full items-center justify-between p-4 text-white md:w-[567px]"
     >
       <NuxtLink
         to="/"
-        class="flex items-center rounded-full border border-white/25 bg-neutral-950/45 px-3 py-2 text-white shadow-lg backdrop-blur-md transition active:scale-95 sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none sm:backdrop-blur-none"
+        class="flex items-center rounded-full border border-white/25 bg-neutral-950/45 px-3 py-2 text-white shadow-lg backdrop-blur-md transition active:scale-95"
         title="返回主页"
       >
         <UIcon
@@ -37,7 +36,7 @@
       </NuxtLink>
       <NuxtLink
         v-if="$route.path === '/user/settings' && global.userinfo.token"
-        class="hidden sm:flex"
+        class="hidden items-center rounded-full border border-white/25 bg-neutral-950/45 p-2 text-white shadow-lg backdrop-blur-md transition active:scale-95 sm:flex"
         title="登出"
         @click="logout"
       >
@@ -106,6 +105,15 @@
       class="sm:hidden absolute right-3 top-3 z-20 flex items-center gap-2"
     >
       <NuxtLink
+        v-if="global.userinfo.token && $route.path === '/'"
+        to="/new"
+        title="发表"
+        aria-label="发表"
+        class="flex h-9 w-9 items-center justify-center rounded-full border border-white/25 bg-neutral-950/45 text-white shadow-lg backdrop-blur-md transition active:scale-95"
+      >
+        <UIcon name="i-carbon-camera" class="h-5 w-5" />
+      </NuxtLink>
+      <NuxtLink
         v-if="$route.path !== '/user/calendar' && global.userinfo.token"
         to="/user/calendar"
         title="搜索"
@@ -153,7 +161,6 @@ const route = useRoute();
 
 const props = defineProps<{ user: UserVO }>();
 const mode = useColorMode();
-const { y } = useWindowScroll();
 const resolvedModeLabel = computed(() =>
   mode.value === "dark" ? "暗色" : "亮色"
 );

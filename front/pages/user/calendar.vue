@@ -3,15 +3,28 @@
     <Header :user="currentUser"/>
 
     <div class="p-4 space-y-4">
-      <UFormGroup label="日期范围" name="contentContains" :ui="{label:{base:'font-bold'}}">
+      <UFormGroup label="包含内容" name="contentContains" :ui="{label:{base:'font-bold'}}">
+        <UInput v-model="state.contentContains" placeholder="搜索内容"/>
+      </UFormGroup>
+
+      <UFormGroup label="日期范围" name="dateRange" :ui="{label:{base:'font-bold'}}">
         <UPopover :popper="{ placement: 'bottom-start' }">
           <UButton icon="i-heroicons-calendar-days-20-solid" color="white" variant="solid" class="w-full">
-            从 {{ format(state.range.start, 'yyy-MM-dd') }} 到 {{ format(state.range.end, 'yyy-MM-dd') }}
+            {{ dateRangeLabel }}
           </UButton>
 
           <template #panel="{ close }">
             <div class="flex flex-col items-center sm:divide-x divide-gray-200 dark:divide-gray-800">
-              <div class="hidden sm:flex flex-row py-4">
+              <div class="flex w-full flex-col py-4 sm:flex-row">
+                <UButton
+                    label="所有时间"
+                    color="gray"
+                    variant="ghost"
+                    class="rounded-none px-6"
+                    :class="[!rangeEnabled ? 'bg-gray-100 dark:bg-gray-800' : 'hover:bg-gray-50 dark:hover:bg-gray-800/50']"
+                    truncate
+                    @click="selectAllTime(close)"
+                />
                 <UButton
                     v-for="(range, index) in ranges"
                     :key="index"
@@ -24,15 +37,16 @@
                     @click="selectRange(range.duration)"
                 />
               </div>
-              <DatePicker v-model="state.range" @close="close"/>
+              <DatePicker
+                  :model-value="state.range"
+                  @update:model-value="selectCustomRange"
+                  @close="close"
+              />
             </div>
           </template>
         </UPopover>
       </UFormGroup>
 
-      <UFormGroup label="包含内容" name="contentContains" :ui="{label:{base:'font-bold'}}">
-        <UInput v-model="state.contentContains"/>
-      </UFormGroup>
       <UFormGroup label="包含标签" name="tagContains" :ui="{label:{base:'font-bold'}}">
         <USelectMenu multiple v-model="state.tags" searchable :options="tags">
           <template #label>
@@ -63,10 +77,16 @@
 
 <script setup lang="ts">
 import type {MemoVO, UserVO} from "~/types";
-import {add, format, isSameDay, sub} from "date-fns";
+import {format, isSameDay, sub} from "date-fns";
+import type {Duration} from "date-fns";
 import Memo from "~/components/Memo.vue";
 import {memoChangedEvent, memoReloadEvent} from "~/event";
 import {useElementVisibility} from '@vueuse/core'
+
+type DateRange = {
+  start: Date
+  end: Date
+}
 
 const ranges = [
   {label: '一周内', duration: {days: 7}},
@@ -77,24 +97,60 @@ const ranges = [
 ]
 const tags = ref<string[]>([])
 const currentUser = useState<UserVO>('userinfo')
+const rangeEnabled = ref(false)
 const state = reactive({
   page: 1,
   size: 10,
   contentContains: "",
-  tags: [],
+  tags: [] as string[],
   showType: -1,
   range: {
     start: sub(new Date(), {days: 31}),
-    end: add(new Date(), {days: 1})
+    end: new Date()
   }
+})
+const dateRangeLabel = computed(() => {
+  if (!rangeEnabled.value) {
+    return '所有时间'
+  }
+
+  return `从 ${format(state.range.start, 'yyyy-MM-dd')} 到 ${format(state.range.end, 'yyyy-MM-dd')}`
 })
 
 function isRangeSelected(duration: Duration) {
-  return isSameDay(state.range.start, sub(new Date(), duration)) && isSameDay(state.range.end, new Date())
+  return rangeEnabled.value && isSameDay(state.range.start, sub(new Date(), duration)) && isSameDay(state.range.end, new Date())
+}
+
+function selectAllTime(close?: () => void) {
+  rangeEnabled.value = false
+  close?.()
 }
 
 function selectRange(duration: Duration) {
+  rangeEnabled.value = true
   state.range = {start: sub(new Date(), duration), end: new Date()}
+}
+
+function selectCustomRange(range: DateRange) {
+  rangeEnabled.value = true
+  state.range = range
+}
+
+const buildSearchParams = () => {
+  const params: Record<string, unknown> = {
+    page: state.page,
+    size: state.size,
+    contentContains: state.contentContains,
+    showType: state.showType,
+    tag: state.tags.join(','),
+  }
+
+  if (rangeEnabled.value) {
+    params.start = state.range.start
+    params.end = state.range.end
+  }
+
+  return params
 }
 
 const loadTags = async () => {
@@ -127,15 +183,7 @@ const reload = async () => {
     list: Array<MemoVO>,
     total: number,
     hasNext: boolean
-  }>('/memo/list', {
-    page: state.page,
-    size: state.size,
-    start: state.range.start,
-    end: state.range.end,
-    contentContains: state.contentContains,
-    showType: state.showType,
-    tag: state.tags.join(','),
-  })
+  }>('/memo/list', buildSearchParams())
   memos.value = res.list
   hasNext.value = res.hasNext
 }
@@ -146,15 +194,7 @@ const loadMore = async () => {
     list: Array<MemoVO>,
     total: number,
     hasNext: boolean
-  }>('/memo/list', {
-    page: state.page,
-    size: state.size,
-    start: state.range.start,
-    end: state.range.end,
-    contentContains: state.contentContains,
-    showType: state.showType,
-    tag: state.tags.join(','),
-  })
+  }>('/memo/list', buildSearchParams())
   memos.value = [...memos.value, ...res.list]
   hasNext.value = res.hasNext
 }
