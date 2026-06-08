@@ -4,6 +4,11 @@ export default defineNuxtConfig({
     devtools: {enabled: false},
     modules: ["@nuxt/ui", '@nuxt/icon', '@nuxtjs/color-mode', '@vueuse/nuxt', 'dayjs-nuxt'],
     ssr: false,
+    colorMode: {
+        preference: 'system',
+        fallback: 'light',
+        classSuffix: '',
+    },
     dayjs: {
         locales: ['zh'],
         defaultLocale: 'zh'
@@ -32,6 +37,7 @@ export default defineNuxtConfig({
             meta: [
                 { name: "viewport", content: "width=device-width, initial-scale=1, user-scalable=no" },
                 { charset: "utf-8" },
+                { name: "color-scheme", content: "light dark" },
             ],
             link: [
                 {href: `/css/APlayer.min.css`, rel: 'stylesheet'},

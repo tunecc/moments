@@ -56,49 +56,15 @@
     <div
       class="dark:bg-neutral-800 hidden sm:flex sm:absolute sm:-right-10 sm:rounded sm:p-2 sm:flex-col sm:w-fit justify-end shadow w-full flex-row top-0 p-1 flex gap-2 bg-white"
     >
-      <svg
-        v-if="mode.value === 'light'"
-        class="lucide lucide-moon-star-icon cursor-pointer"
+      <button
+        type="button"
+        class="flex text-[#9fc84a] cursor-pointer"
+        :title="themeModeLabel"
+        :aria-label="themeModeLabel"
         @click="toggleMode"
-        xmlns="http://www.w3.org/2000/svg"
-        width="20"
-        height="20"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="#FDE047"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
       >
-        <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9"></path>
-        <path d="M20 3v4"></path>
-        <path d="M22 5h-4"></path>
-      </svg>
-
-      <svg
-        v-else
-        class="lucide lucide-sun-icon cursor-pointer"
-        @click="toggleMode"
-        xmlns="http://www.w3.org/2000/svg"
-        width="20"
-        height="20"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="#FDE047"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
-      >
-        <circle cx="12" cy="12" r="4"></circle>
-        <path d="M12 2v2"></path>
-        <path d="M12 20v2"></path>
-        <path d="m4.93 4.93 1.41 1.41"></path>
-        <path d="m17.66 17.66 1.41 1.41"></path>
-        <path d="M2 12h2"></path>
-        <path d="M20 12h2"></path>
-        <path d="m6.34 17.66-1.41 1.41"></path>
-        <path d="m19.07 4.93-1.41 1.41"></path>
-      </svg>
+        <UIcon :name="themeModeIcon" class="w-5 h-5" />
+      </button>
 
       <NuxtLink v-if="global.userinfo.token" to="/new" title="发表">
         <UIcon
@@ -144,7 +110,7 @@
       </NuxtLink>
       <NuxtLink v-if="!global.userinfo.token" to="/user/login" title="登录">
         <UIcon
-          name="i-carbon-login"
+          name="i-octicon-sign-in-16"
           class="text-[#9fc84a] w-5 h-5 cursor-pointer"
         />
       </NuxtLink>
@@ -170,7 +136,6 @@
   </div>
 </template>
 <script setup lang="ts">
-import { toast } from "vue-sonner";
 import type { UserVO } from "~/types";
 import { useGlobalState } from "~/store";
 
@@ -180,6 +145,24 @@ const route = useRoute();
 const props = defineProps<{ user: UserVO }>();
 const mode = useColorMode();
 const { y } = useWindowScroll();
+const resolvedModeLabel = computed(() =>
+  mode.value === "dark" ? "暗色" : "亮色"
+);
+const themePreferenceLabel = computed(() => {
+  if (mode.preference === "system") {
+    return `自动（当前${resolvedModeLabel.value}）`;
+  }
+
+  return mode.preference === "dark" ? "暗色" : "亮色";
+});
+const themeModeLabel = computed(() => `显示模式：${themePreferenceLabel.value}`);
+const themeModeIcon = computed(() => {
+  if (mode.preference === "system") {
+    return "i-carbon-screen";
+  }
+
+  return mode.preference === "dark" ? "i-carbon-moon" : "i-carbon-sun";
+});
 
 const logout = async () => {
   global.value.userinfo = {};
@@ -188,12 +171,11 @@ const logout = async () => {
 
 const toggleMode = () => {
   if (mode.preference === "system") {
-    mode.preference = "dark";
-  } else if (mode.preference === "dark") {
     mode.preference = "light";
+  } else if (mode.preference === "light") {
+    mode.preference = "dark";
   } else {
     mode.preference = "system";
-    toast.success("显示模式将跟随系统设置");
   }
 };
 </script>
