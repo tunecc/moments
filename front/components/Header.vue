@@ -5,7 +5,7 @@
   >
     <div
       v-if="$route.path !== '/' && $route.path.indexOf('/memo/') < 0"
-      class="fixed top-0 z-30 flex w-full items-center justify-between p-4 text-white md:w-[567px]"
+      class="absolute top-0 z-30 flex w-full items-center justify-between p-4 text-white md:w-[567px]"
     >
       <NuxtLink
         to="/"
@@ -114,7 +114,7 @@
         <UIcon name="i-carbon-camera" class="h-5 w-5" />
       </NuxtLink>
       <NuxtLink
-        v-if="$route.path !== '/user/calendar' && global.userinfo.token"
+        v-if="global.userinfo.token && $route.path === '/'"
         to="/user/calendar"
         title="搜索"
         aria-label="搜索"

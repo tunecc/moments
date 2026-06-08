@@ -1,23 +1,29 @@
 <template>
-  <div v-if="$route.path === `/memo/${item.id}`" class="header relative mb-14">
+  <div v-if="$route.path === `/memo/${item.id}`" class="header mb-14">
     <div
-      :class="{ 'bg-[#4c4c4c]/80 z-10': y > 100 }"
-      class="flex fixed justify-between items-center p-4 w-full md:w-[567px] text-white top-0"
+      class="absolute left-0 right-0 top-0 z-30 mx-auto flex w-full items-center justify-between p-4 text-white md:w-[567px]"
     >
-      <NuxtLink class="flex items-center" title="返回主页">
+      <NuxtLink
+        to="/"
+        class="flex items-center rounded-full border border-white/25 bg-neutral-950/45 px-3 py-2 text-white shadow-lg backdrop-blur-md transition active:scale-95"
+        title="返回主页"
+      >
         <UIcon
-          @click="navigateTo('/')"
           name="i-carbon-chevron-left"
-          class="w-5 h-5 cursor-pointer mr-4"
+          class="w-5 h-5 cursor-pointer mr-2 sm:mr-4"
         />
         <span>详情</span>
       </NuxtLink>
-      <UIcon
+      <button
         v-if="global.userinfo.id === 1 || global.userinfo.id === item.userId"
-        name="i-solar-menu-dots-bold"
-        class="w-5 h-5 cursor-pointer"
+        type="button"
+        class="flex items-center rounded-full border border-white/25 bg-neutral-950/45 p-2 text-white shadow-lg backdrop-blur-md transition active:scale-95"
+        title="更多操作"
+        aria-label="更多操作"
         @click="moreToolbar = true"
-      />
+      >
+        <UIcon name="i-solar-menu-dots-bold" class="w-5 h-5 cursor-pointer" />
+      </button>
     </div>
   </div>
   <div>
@@ -309,7 +315,6 @@ const isDetailPage = computed(() => {
 const contentRef = ref<HTMLDivElement | null>(null);
 const sysConfig = useState<SysConfigVO>("sysConfig");
 const route = useRoute();
-const { y } = useWindowScroll();
 
 const getMemoMaxHeightStyle = () => {
   if (isDetailPage.value || showMoreClicked.value) {
