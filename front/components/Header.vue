@@ -8,11 +8,14 @@
       :class="{ 'bg-[#4c4c4c]/80 z-10': y > 100 }"
       class="flex fixed justify-between items-center p-4 w-full md:w-[567px] text-white top-0"
     >
-      <NuxtLink class="flex items-center" title="返回主页">
+      <NuxtLink
+        to="/"
+        class="flex items-center rounded-full border border-white/25 bg-neutral-950/45 px-3 py-2 text-white shadow-lg backdrop-blur-md transition active:scale-95 sm:border-0 sm:bg-transparent sm:p-0 sm:shadow-none sm:backdrop-blur-none"
+        title="返回主页"
+      >
         <UIcon
-          @click="navigateTo('/')"
           name="i-carbon-chevron-left"
-          class="w-5 h-5 cursor-pointer mr-4"
+          class="w-5 h-5 cursor-pointer mr-2 sm:mr-4"
         />
         <span v-if="$route.path === '/user/calendar'">日历检索</span>
         <span v-else-if="$route.path === '/sys/settings'">系统设置</span>
@@ -96,6 +99,29 @@
           name="i-octicon-sign-in-16"
           class="text-[#9fc84a] w-5 h-5 cursor-pointer"
         />
+      </NuxtLink>
+    </div>
+
+    <div
+      class="sm:hidden absolute right-3 top-3 z-20 flex items-center gap-2"
+    >
+      <NuxtLink
+        v-if="$route.path !== '/user/calendar' && global.userinfo.token"
+        to="/user/calendar"
+        title="搜索"
+        aria-label="搜索"
+        class="flex h-9 w-9 items-center justify-center rounded-full border border-white/25 bg-neutral-950/45 text-white shadow-lg backdrop-blur-md transition active:scale-95"
+      >
+        <UIcon name="i-jam-search-folder" class="h-5 w-5" />
+      </NuxtLink>
+      <NuxtLink
+        v-if="!global.userinfo.token && $route.path !== '/user/login'"
+        to="/user/login"
+        title="登录"
+        aria-label="登录"
+        class="flex h-9 w-9 items-center justify-center rounded-full border border-white/25 bg-neutral-950/45 text-white shadow-lg backdrop-blur-md transition active:scale-95"
+      >
+        <UIcon name="i-octicon-sign-in-16" class="h-5 w-5" />
       </NuxtLink>
     </div>
 
