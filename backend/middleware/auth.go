@@ -38,13 +38,16 @@ func Auth(injector do.Injector) echo.MiddlewareFunc {
 			if tokenStr != "" {
 				token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (any, error) {
 					return []byte(cfg.JwtKey), nil
-				})
+				}, jwt.WithValidMethods([]string{"HS256"}))
 
 				if err != nil || !token.Valid {
 					return handler.FailResp(c, handler.TokenInvalid)
 				}
 
-				claims := token.Claims.(jwt.MapClaims)
+				claims, ok := token.Claims.(jwt.MapClaims)
+				if !ok {
+					return handler.FailResp(c, handler.TokenInvalid)
+				}
 				//zlog.Info().Msgf("user id :%v", claims["userId"])
 
 				var user model.User

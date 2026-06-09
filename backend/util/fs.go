@@ -10,7 +10,8 @@ import (
 func Exists(path string) bool {
 	_, err := os.Stat(path)
 	if err != nil {
-		return os.IsExist(err)
+		// 仅当明确为"不存在"时返回 false;其它错误(如权限问题)视为存在,避免误覆盖
+		return !os.IsNotExist(err)
 	}
 
 	return true

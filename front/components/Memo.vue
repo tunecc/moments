@@ -305,7 +305,7 @@ import { toast } from "vue-sonner";
 import { memoChangedEvent, memoReloadEvent } from "~/event";
 import Comment from "~/components/Comment.vue";
 import { useGlobalState } from "~/store";
-import { md } from "~/utils";
+import { renderMarkdown } from "~/utils";
 
 const showMore = ref(false);
 const showMoreClicked = ref(false);
@@ -453,9 +453,9 @@ onMounted(() => {
 const content = computed(() => {
   if (item.value.content && item.value.content.length > 0) {
     try {
-      return md.render(item.value.content);
+      return renderMarkdown(item.value.content);
     } catch (e) {
-      console.log("内容渲染错误,请重新编辑", e);
+      console.error("内容渲染错误,请重新编辑", e);
       return "内容渲染错误,请重新编辑";
     }
   }

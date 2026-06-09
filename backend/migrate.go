@@ -1,9 +1,11 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"regexp"
 	"strings"
 
@@ -12,8 +14,23 @@ import (
 	"github.com/kingwrcy/moments/vo"
 	"github.com/rs/zerolog"
 	"github.com/tidwall/gjson"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
+
+// generateRandomPassword 生成指定长度的随机密码(使用密码学安全的随机源)。
+func generateRandomPassword(length int) (string, error) {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	password := make([]byte, length)
+	for i := range password {
+		idx, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
+		if err != nil {
+			return "", err
+		}
+		password[i] = charset[idx.Int64()]
+	}
+	return string(password), nil
+}
 
 func migrateTo3(tx *gorm.DB, log zerolog.Logger) {
 	var (
@@ -25,8 +42,19 @@ func migrateTo3(tx *gorm.DB, log zerolog.Logger) {
 	if count == 0 {
 		log.Info().Msg("初始化默认配置...")
 		if err := tx.First(&admin).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+			// 首次启动随机生成管理员密码,避免使用固定弱口令
+			plainPassword, genErr := generateRandomPassword(12)
+			if genErr != nil {
+				log.Error().Msgf("生成随机管理员密码失败:%s", genErr)
+				return
+			}
+			hashed, hashErr := bcrypt.GenerateFromPassword([]byte(plainPassword), bcrypt.DefaultCost)
+			if hashErr != nil {
+				log.Error().Msgf("管理员密码加密失败:%s", hashErr)
+				return
+			}
 			admin.Username = "admin"
-			admin.Password = "$2a$12$Ruw0XIDW3IuHmD3WXsRTnOUt/0sfqgKWP3wbsqx5sGcCuebWa6X.i"
+			admin.Password = string(hashed)
 			admin.Title = "极简朋友圈"
 			admin.Slogan = "修道者，逆天而行，注定要一生孤独。"
 			admin.Nickname = "admin"
@@ -35,9 +63,13 @@ func migrateTo3(tx *gorm.DB, log zerolog.Logger) {
 			admin.CoverUrl = "/cover.webp"
 			admin.AvatarUrl = "/avatar.webp"
 			if err := tx.Save(&admin).Error; err != nil {
-				log.Info().Msgf("用户不存在,初始化[admin/a123456]用户... 失败:%s", err)
+				log.Error().Msgf("初始化 admin 用户失败:%s", err)
 			} else {
-				log.Info().Msg("用户不存在,初始化[admin/a123456]用户... 成功!")
+				// 仅在首次初始化时打印一次,提示用户尽快登录修改
+				log.Warn().Msgf("============================================================")
+				log.Warn().Msgf("已初始化管理员账号 admin,随机密码为: %s", plainPassword)
+				log.Warn().Msgf("请立即登录并修改密码,此密码仅显示这一次!")
+				log.Warn().Msgf("============================================================")
 			}
 		}
 		item.AdminUserName = admin.Username
@@ -62,7 +94,6 @@ func migrateTo3(tx *gorm.DB, log zerolog.Logger) {
 		}
 		item.EnableGoogleRecaptcha = false
 		item.EnableComment = true
-		item.MaxCommentLength = 120
 		item.MaxCommentLength = 300
 		item.CommentOrder = "desc"
 		item.TimeFormat = "timeAgo"

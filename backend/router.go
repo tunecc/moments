@@ -59,6 +59,17 @@ func setupRouter(injector do.Injector) {
 	fileGroup.POST("/s3PreSigned", fileHandler.S3PreSigned)
 
 	uploadGroup := e.Group("/upload")
+	// 安全头:防止上传的文件被浏览器当作 HTML/脚本执行(存储型 XSS)。
+	// nosniff 禁止 MIME 嗅探,CSP sandbox 禁用脚本执行,X-Frame-Options 防点击劫持。
+	uploadGroup.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			h := c.Response().Header()
+			h.Set("X-Content-Type-Options", "nosniff")
+			h.Set("Content-Security-Policy", "default-src 'none'; sandbox; img-src 'self'; media-src 'self'")
+			h.Set("X-Frame-Options", "SAMEORIGIN")
+			return next(c)
+		}
+	})
 	uploadGroup.Use(middleware.StaticWithConfig(middleware.StaticConfig{
 		Root:       cfg.UploadDir,
 		HTML5:      false,

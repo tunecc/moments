@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,8 +16,6 @@ import (
 
 	"github.com/PuerkitoBio/goquery"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 	"github.com/kingwrcy/moments/db"
@@ -39,7 +36,7 @@ type MemoHandler struct {
 func NewMemoHandler(injector do.Injector) *MemoHandler {
 	return &MemoHandler{
 		base: do.MustInvoke[BaseHandler](injector),
-		hc:   http.Client{},
+		hc:   http.Client{Timeout: 15 * time.Second},
 	}
 }
 
@@ -90,6 +87,15 @@ func (m MemoHandler) handleImgConfigs(sysConfigVO *vo.FullSysConfigVO, memo *db.
 	memo.ImgConfigs = &imgConfigs
 }
 
+// normalizeOrder 将外部传入的排序方向归一化为 asc/desc,
+// 防止把不可信值直接拼进 SQL 的 Order 子句造成注入。
+func normalizeOrder(order string) string {
+	if strings.EqualFold(strings.TrimSpace(order), "asc") {
+		return "asc"
+	}
+	return "desc"
+}
+
 // ListMemos godoc
 //
 //	@Tags		Memo
@@ -123,7 +129,11 @@ func (m MemoHandler) ListMemos(c echo.Context) error {
 	}
 
 	m.base.db.First(&sysConfig)
-	_ = json.Unmarshal([]byte(sysConfig.Content), &sysConfigVO)
+	if err := json.Unmarshal([]byte(sysConfig.Content), &sysConfigVO); err != nil {
+		m.base.log.Error().Msgf("无法反序列化系统配置: %s", err)
+		return FailRespWithMsg(c, Fail, "读取系统配置异常")
+	}
+	commentOrder := normalizeOrder(sysConfigVO.CommentOrder)
 	offset := (req.Page - 1) * req.Size
 
 	tx := m.base.db.Model(&db.Memo{}).Preload("User", func(x *gorm.DB) *gorm.DB {
@@ -172,10 +182,29 @@ func (m MemoHandler) ListMemos(c echo.Context) error {
 	tx.Session(&gorm.Session{}).Order("pinned desc, createdAt desc").Limit(req.Size).Offset(offset).Find(&list)
 	tx.Session(&gorm.Session{}).Count(&total)
 
-	for i, memo := range list {
-		var comments []db.Comment
-		m.base.db.Where("memoId = ?", memo.Id).Order(fmt.Sprintf("createdAt %s", sysConfigVO.CommentOrder)).Limit(5).Find(&comments)
-		list[i].Comments = comments
+	// 一次性按 memoId IN 查询所有评论,避免 N+1。
+	// 之后在内存里按 memo 分组,各取最多 5 条。
+	if len(list) > 0 {
+		memoIds := make([]int32, 0, len(list))
+		for _, memo := range list {
+			memoIds = append(memoIds, memo.Id)
+		}
+
+		var allComments []db.Comment
+		m.base.db.Where("memoId in ?", memoIds).
+			Order(fmt.Sprintf("createdAt %s", commentOrder)).
+			Find(&allComments)
+
+		commentsByMemo := make(map[int32][]db.Comment, len(list))
+		for _, comment := range allComments {
+			if len(commentsByMemo[comment.MemoId]) < 5 {
+				commentsByMemo[comment.MemoId] = append(commentsByMemo[comment.MemoId], comment)
+			}
+		}
+
+		for i := range list {
+			list[i].Comments = commentsByMemo[list[i].Id]
+		}
 	}
 
 	for i := range list {
@@ -202,6 +231,9 @@ func (m MemoHandler) ListMemos(c echo.Context) error {
 func (m MemoHandler) RemoveMemo(c echo.Context) error {
 	ctx := c.(CustomContext)
 	currentUser := ctx.CurrentUser()
+	if currentUser == nil {
+		return FailResp(c, TokenMissing)
+	}
 	id, err := strconv.Atoi(c.QueryParam("id"))
 	if err != nil {
 		return FailResp(c, ParamError)
@@ -209,7 +241,7 @@ func (m MemoHandler) RemoveMemo(c echo.Context) error {
 	var (
 		memo db.Memo
 	)
-	if err = m.base.db.First(&memo, id).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+	if err = m.base.db.First(&memo, id).Error; err != nil {
 		return FailResp(c, ParamError)
 	}
 
@@ -245,7 +277,10 @@ func (m MemoHandler) LikeMemo(c echo.Context) error {
 	}
 
 	m.base.db.First(&sysConfig)
-	_ = json.Unmarshal([]byte(sysConfig.Content), &sysConfigVO)
+	if err := json.Unmarshal([]byte(sysConfig.Content), &sysConfigVO); err != nil {
+		m.base.log.Error().Msgf("无法反序列化系统配置: %s", err)
+		return FailRespWithMsg(c, Fail, "读取系统配置异常")
+	}
 
 	if sysConfigVO.EnableGoogleRecaptcha {
 		token = c.QueryParam("token")
@@ -256,11 +291,11 @@ func (m MemoHandler) LikeMemo(c echo.Context) error {
 			return FailRespWithMsg(c, Fail, err.Error())
 		}
 	}
-	if err = m.base.db.First(&memo, id).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+	if err = m.base.db.First(&memo, id).Error; err != nil {
 		return FailResp(c, ParamError)
 	}
-	memo.FavCount = memo.FavCount + 1
-	if m.base.db.Updates(&memo).RowsAffected != 1 {
+	// 用原子表达式自增,避免并发点赞时的丢更新(read-modify-write 竞态)
+	if m.base.db.Model(&memo).UpdateColumn("favCount", gorm.Expr("favCount + 1")).RowsAffected != 1 {
 		return FailRespWithMsg(c, Fail, "点赞失败")
 	}
 	return SuccessResp(c, h{})
@@ -327,9 +362,12 @@ func (m MemoHandler) SaveMemo(c echo.Context) error {
 	var now = time.Now()
 	ctx := c.(CustomContext)
 	currentUser := ctx.CurrentUser()
+	if currentUser == nil {
+		return FailResp(c, TokenMissing)
+	}
 
 	if req.ID > 0 {
-		if err = m.base.db.First(&memo, req.ID).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		if err = m.base.db.First(&memo, req.ID).Error; err != nil {
 			return FailResp(c, ParamError)
 		}
 		if memo.UserId != currentUser.Id {
@@ -374,7 +412,10 @@ func (m MemoHandler) SaveMemo(c echo.Context) error {
 		memo.CreatedAt = &createdAt
 	}
 
-	m.base.db.Save(&memo)
+	if err := m.base.db.Save(&memo).Error; err != nil {
+		m.base.log.Error().Msgf("保存memo异常:%s", err)
+		return FailRespWithMsg(c, Fail, "保存失败")
+	}
 
 	return SuccessResp(c, h{})
 }
@@ -413,7 +454,11 @@ func (m MemoHandler) GetMemo(c echo.Context) error {
 		return FailResp(c, ParamError)
 	}
 
-	if *memo.ShowType != 1 && (currentUser == nil || currentUser.Id != memo.UserId) {
+	showType := int32(1)
+	if memo.ShowType != nil {
+		showType = *memo.ShowType
+	}
+	if showType != 1 && (currentUser == nil || currentUser.Id != memo.UserId) {
 		return FailRespWithMsg(c, Fail, "暂无权限查看")
 	}
 
@@ -444,6 +489,9 @@ func (m MemoHandler) GetMemo(c echo.Context) error {
 func (m MemoHandler) SetPinned(c echo.Context) error {
 	ctx := c.(CustomContext)
 	currentUser := ctx.CurrentUser()
+	if currentUser == nil {
+		return FailResp(c, TokenMissing)
+	}
 	id, err := strconv.Atoi(c.QueryParam("id"))
 	if err != nil {
 		return FailResp(c, ParamError)
@@ -451,7 +499,7 @@ func (m MemoHandler) SetPinned(c echo.Context) error {
 	var (
 		memo db.Memo
 	)
-	if err = m.base.db.First(&memo, id).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+	if err = m.base.db.First(&memo, id).Error; err != nil {
 		return FailResp(c, ParamError)
 	}
 
@@ -459,9 +507,18 @@ func (m MemoHandler) SetPinned(c echo.Context) error {
 		return FailRespWithMsg(c, Fail, "没有权限")
 	}
 
-	m.base.db.Table("Memo").Where("pinned = true").Update("pinned", false)
-	pinned := *memo.Pinned
-	if err = m.base.db.Table("Memo").Where("id=?", id).Update("pinned", !pinned).Error; err != nil {
+	pinned := false
+	if memo.Pinned != nil {
+		pinned = *memo.Pinned
+	}
+
+	// 取消其它置顶 + 翻转当前 memo 的置顶状态,两步需在同一事务内,避免中途失败造成状态不一致
+	if err = m.base.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Table("Memo").Where("pinned = true").Update("pinned", false).Error; err != nil {
+			return err
+		}
+		return tx.Table("Memo").Where("id=?", id).Update("pinned", !pinned).Error
+	}); err != nil {
 		return FailRespWithMsg(c, Fail, err.Error())
 	}
 	return SuccessResp(c, h{})
@@ -484,6 +541,10 @@ type externalWebsite struct {
 //	@Router		/api/memo/getFaviconAndTitle [post]
 func (m MemoHandler) GetFaviconAndTitle(c echo.Context) error {
 	websiteURL := c.QueryParam("url")
+	if err := fs_util.ValidateExternalURL(websiteURL); err != nil {
+		m.base.log.Warn().Msgf("拒绝抓取外部链接[%s]: %v", websiteURL, err)
+		return FailRespWithMsg(c, ParamError, err.Error())
+	}
 	favicon, title, err := getFaviconAndTitle(websiteURL)
 	if err != nil {
 		return FailResp(c, ParamError)
@@ -587,7 +648,7 @@ func (m MemoHandler) GetDoubanMovieInfo(c echo.Context) error {
 		userAgent   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3"
 	)
 
-	if err := m.base.db.First(&sysConfig).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+	if err := m.base.db.First(&sysConfig).Error; err != nil {
 		return FailRespWithMsg(c, Fail, "系统配置为空")
 	}
 	err := json.Unmarshal([]byte(sysConfig.Content), &sysConfigVo)
@@ -602,7 +663,7 @@ func (m MemoHandler) GetDoubanMovieInfo(c echo.Context) error {
 	req.Header.Set("User-Agent", userAgent)
 	start := time.Now()
 	res, err := m.hc.Do(req)
-	m.base.log.Info().Str("豆瓣读书ID", id).Str("URL", target).Str("耗时", fmt.Sprintf("%f秒", time.Since(start).Seconds())).Msgf("获取豆瓣读书")
+	m.base.log.Info().Str("豆瓣电影ID", id).Str("URL", target).Str("耗时", fmt.Sprintf("%f秒", time.Since(start).Seconds())).Msgf("获取豆瓣电影")
 	if err != nil {
 		m.base.log.Error().Msgf("获取豆瓣电影异常:%s", err.Error())
 		return FailRespWithMsg(c, Fail, err.Error())
@@ -610,7 +671,7 @@ func (m MemoHandler) GetDoubanMovieInfo(c echo.Context) error {
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
 		m.base.log.Error().Msgf("豆瓣电影API返回码不是200,而是:%d", res.StatusCode)
-		return FailRespWithMsg(c, Fail, fmt.Sprintf("豆瓣读书API返回码不是200,而是:%d,URL:%s", res.StatusCode, target))
+		return FailRespWithMsg(c, Fail, fmt.Sprintf("豆瓣电影API返回码不是200,而是:%d,URL:%s", res.StatusCode, target))
 	}
 
 	// Load the HTML document
@@ -648,11 +709,7 @@ func (m MemoHandler) GetDoubanMovieInfo(c echo.Context) error {
 		return FailRespWithMsg(c, Fail, "无法获取电影封面")
 	}
 	if sysConfigVo.EnableS3 {
-		cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion(sysConfigVo.S3.Region),
-			config.WithEndpointResolver(aws.EndpointResolverFunc(func(service, region string) (aws.Endpoint, error) {
-				return aws.Endpoint{URL: sysConfigVo.S3.Endpoint}, nil
-			})),
-			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(sysConfigVo.S3.AccessKey, sysConfigVo.S3.SecretKey, "")))
+		client, err := newS3Client(c.Request().Context(), sysConfigVo.S3)
 		if err != nil {
 			m.base.log.Error().Msgf("无法加载S3 SDK配置, %s", err)
 			return FailRespWithMsg(c, Fail, err.Error())
@@ -664,9 +721,8 @@ func (m MemoHandler) GetDoubanMovieInfo(c echo.Context) error {
 			return FailRespWithMsg(c, Fail, fmt.Sprintf("下载豆瓣电影图片异常:%s", err.Error()))
 		}
 		defer imageResponse.Body.Close()
-		client := s3.NewFromConfig(cfg)
 		key := fmt.Sprintf("moments/%s/%s", time.Now().Format("2006/01/02"), strings.ReplaceAll(uuid.NewString(), "-", ""))
-		_, err = client.PutObject(context.TODO(), &s3.PutObjectInput{
+		_, err = client.PutObject(c.Request().Context(), &s3.PutObjectInput{
 			Bucket: aws.String(sysConfigVo.S3.Bucket),
 			Key:    aws.String(key),
 			Body:   imageResponse.Body,
@@ -801,11 +857,7 @@ func (m MemoHandler) GetDoubanBookInfo(c echo.Context) error {
 		return FailRespWithMsg(c, Fail, "无法获取图书封面")
 	}
 	if sysConfigVo.EnableS3 {
-		cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithRegion(sysConfigVo.S3.Region),
-			config.WithEndpointResolver(aws.EndpointResolverFunc(func(service, region string) (aws.Endpoint, error) {
-				return aws.Endpoint{URL: sysConfigVo.S3.Endpoint}, nil
-			})),
-			config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(sysConfigVo.S3.AccessKey, sysConfigVo.S3.SecretKey, "")))
+		s3Client, err := newS3Client(c.Request().Context(), sysConfigVo.S3)
 		if err != nil {
 			m.base.log.Error().Msgf("无法加载S3 SDK配置, %s", err)
 			return FailRespWithMsg(c, Fail, err.Error())
@@ -817,9 +869,8 @@ func (m MemoHandler) GetDoubanBookInfo(c echo.Context) error {
 			return FailRespWithMsg(c, Fail, fmt.Sprintf("下载豆瓣图片异常:%s", err.Error()))
 		}
 		defer imageResponse.Body.Close()
-		s3Client := s3.NewFromConfig(cfg)
 		key := fmt.Sprintf("moments/%s/%s", time.Now().Format("2006/01/02"), strings.ReplaceAll(uuid.NewString(), "-", ""))
-		_, err = s3Client.PutObject(context.TODO(), &s3.PutObjectInput{
+		_, err = s3Client.PutObject(c.Request().Context(), &s3.PutObjectInput{
 			Bucket: aws.String(sysConfigVo.S3.Bucket),
 			Key:    aws.String(key),
 			Body:   imageResponse.Body,

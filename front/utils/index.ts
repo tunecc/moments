@@ -5,6 +5,7 @@ import { useGlobalState } from "~/store"
 import markdownit from "markdown-it"
 import { fromHighlighter } from "@shikijs/markdown-it/core"
 import { createHighlighterCore } from "shiki/core"
+import DOMPurify from "dompurify"
 
 const global = useGlobalState()
 
@@ -233,6 +234,24 @@ export const md = markdownit({
   typographer: true,
   breaks: true,
 })
+
+// renderMarkdown 渲染 markdown 并对结果做 XSS 消毒。
+// 用户正文经 markdown-it(html:true) 渲染后可能含有恶意脚本/事件属性,
+// 这里用 DOMPurify 清洗后再交给 v-html,防止存储型 XSS。
+export const renderMarkdown = (content: string): string => {
+  const html = md.render(content)
+  // 仅在浏览器环境执行消毒(本项目为 SPA,无 SSR)
+  if (typeof window === "undefined") {
+    return html
+  }
+  return DOMPurify.sanitize(html, {
+    // 保留 Shiki 代码高亮所需的 style/class,以及外链常见属性
+    ADD_ATTR: ["target", "rel", "style", "class"],
+    // 禁止内联事件与危险标签(DOMPurify 默认即拦截,显式声明以示意图)
+    FORBID_TAGS: ["script", "style", "iframe", "form", "object", "embed"],
+    FORBID_ATTR: ["onerror", "onload", "onclick"],
+  })
+}
 
 createHighlighterCore({
   themes: [import("shiki/themes/github-dark.mjs")],

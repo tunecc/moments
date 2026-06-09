@@ -1,11 +1,10 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"os"
 	"path"
 	"path/filepath"
@@ -16,15 +15,12 @@ import (
 	fs_util "github.com/kingwrcy/moments/util"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 	"github.com/kingwrcy/moments/db"
 	"github.com/kingwrcy/moments/vo"
 	"github.com/labstack/echo/v4"
 	"github.com/samber/do/v2"
-	"gorm.io/gorm"
 )
 
 type FileHandler struct {
@@ -62,69 +58,100 @@ func (f FileHandler) Upload(c echo.Context) error {
 
 	files := form.File["files"]
 	for _, file := range files {
-		// 原始文件数据
-		reader, err := file.Open()
+		url, err := f.saveUploadedFile(file)
 		if err != nil {
-			f.base.log.Error().Msgf("打开上传文件异常: %v", err)
-			return FailRespWithMsg(c, Fail, "上传文件异常")
+			return FailRespWithMsg(c, Fail, err.Error())
 		}
-		defer reader.Close()
-
-		// 计算文件 hash
-		sha256, err := fs_util.Sha256(reader)
-		if err != nil {
-			f.base.log.Error().Msgf("计算文件 hash 异常: %v", err)
-			return FailRespWithMsg(c, Fail, "上传文件异常")
-		}
-
-		// 计算文件后缀
-		ext := filepath.Ext(file.Filename)
-
-		// 计算文件本地路径
-		filename := fmt.Sprintf("%s%s", sha256, ext)
-		filePath := path.Join(f.base.cfg.UploadDir, filename)
-
-		// 添加到结果中
-		result = append(result, "/upload/"+filename)
-
-		// 如果文件存在，则跳过保存操作
-		if fs_util.Exists(filePath) {
-			continue
-		}
-
-		// 创建原始文件
-		dst, err := os.Create(filePath)
-		if err != nil {
-			f.base.log.Error().Msgf("打开目标文件异常: %v", err)
-			return FailRespWithMsg(c, Fail, "上传文件异常")
-		}
-		defer dst.Close()
-
-		// 重置文件指针到开头
-		if seeker, ok := reader.(io.Seeker); ok {
-			if _, err := seeker.Seek(0, io.SeekStart); err != nil {
-				f.base.log.Error().Msgf("重置文件指针异常: %v", err)
-				return FailRespWithMsg(c, Fail, "上传文件异常")
-			}
-		}
-
-		// 保存文件数据
-		if _, err = io.Copy(dst, reader); err != nil {
-			f.base.log.Error().Msgf("复制文件异常: %v", err)
-			return FailRespWithMsg(c, Fail, "上传文件异常")
-		}
-
-		// 生成并保存缩略图文件
-		if SupportCompress(filename) {
-			thumb_filename := fmt.Sprintf("%s_thumb%s", sha256, ext)
-			thumb_filepath := path.Join(f.base.cfg.UploadDir, thumb_filename)
-			if err := CompressImage(f, filePath, thumb_filepath, 30); err != nil {
-				f.base.log.Error().Msgf("压缩文件异常: %v", err)
-			}
-		}
+		result = append(result, url)
 	}
 
 	return SuccessResp(c, result)
+}
+
+// saveUploadedFile 校验并保存单个上传文件,返回可访问的 URL。
+// 拆成独立函数以避免在循环中累积 defer,并集中做扩展名/大小/内容类型校验。
+func (f FileHandler) saveUploadedFile(file *multipart.FileHeader) (string, error) {
+	// 扩展名白名单校验
+	if err := fs_util.ValidateUploadExt(file.Filename); err != nil {
+		f.base.log.Warn().Msgf("拒绝上传文件[%s]: %v", file.Filename, err)
+		return "", err
+	}
+
+	// 大小限制
+	if file.Size > fs_util.MaxUploadSize {
+		f.base.log.Warn().Msgf("拒绝上传文件[%s]: 超过大小限制", file.Filename)
+		return "", fmt.Errorf("文件超过大小限制")
+	}
+
+	// 原始文件数据
+	reader, err := file.Open()
+	if err != nil {
+		f.base.log.Error().Msgf("打开上传文件异常: %v", err)
+		return "", fmt.Errorf("上传文件异常")
+	}
+	defer reader.Close()
+
+	// 基于内容嗅探的 MIME 校验
+	head := make([]byte, 512)
+	n, _ := io.ReadFull(reader, head)
+	if err := fs_util.ValidateUploadContentType(head[:n]); err != nil {
+		f.base.log.Warn().Msgf("拒绝上传文件[%s]: %v", file.Filename, err)
+		return "", err
+	}
+	if _, err := reader.Seek(0, io.SeekStart); err != nil {
+		f.base.log.Error().Msgf("重置文件指针异常: %v", err)
+		return "", fmt.Errorf("上传文件异常")
+	}
+
+	// 计算文件 hash
+	sha256, err := fs_util.Sha256(reader)
+	if err != nil {
+		f.base.log.Error().Msgf("计算文件 hash 异常: %v", err)
+		return "", fmt.Errorf("上传文件异常")
+	}
+
+	// 计算文件后缀
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+
+	// 计算文件本地路径
+	filename := fmt.Sprintf("%s%s", sha256, ext)
+	filePath := path.Join(f.base.cfg.UploadDir, filename)
+
+	// 如果文件存在，则跳过保存操作
+	if fs_util.Exists(filePath) {
+		return "/upload/" + filename, nil
+	}
+
+	// 创建原始文件
+	dst, err := os.Create(filePath)
+	if err != nil {
+		f.base.log.Error().Msgf("打开目标文件异常: %v", err)
+		return "", fmt.Errorf("上传文件异常")
+	}
+	defer dst.Close()
+
+	// 重置文件指针到开头
+	if _, err := reader.Seek(0, io.SeekStart); err != nil {
+		f.base.log.Error().Msgf("重置文件指针异常: %v", err)
+		return "", fmt.Errorf("上传文件异常")
+	}
+
+	// 保存文件数据
+	if _, err = io.Copy(dst, reader); err != nil {
+		f.base.log.Error().Msgf("复制文件异常: %v", err)
+		return "", fmt.Errorf("上传文件异常")
+	}
+
+	// 生成并保存缩略图文件
+	if SupportCompress(filename) {
+		thumb_filename := fmt.Sprintf("%s_thumb%s", sha256, ext)
+		thumb_filepath := path.Join(f.base.cfg.UploadDir, thumb_filename)
+		if err := CompressImage(f, filePath, thumb_filepath, 30); err != nil {
+			f.base.log.Error().Msgf("压缩文件异常: %v", err)
+		}
+	}
+
+	return "/upload/" + filename, nil
 }
 
 func (f FileHandler) Exist(c echo.Context) error {
@@ -154,7 +181,8 @@ func (f FileHandler) Clean(c echo.Context) error {
 		sysConfigVo vo.FullSysConfigVO
 	)
 
-	if err := f.base.db.First(&sysConfig).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+	if err := f.base.db.First(&sysConfig).Error; err != nil {
+		f.base.log.Error().Msgf("读取系统配置异常: %v", err)
 		return FailResp(c, Fail)
 	}
 
@@ -300,7 +328,7 @@ func (f FileHandler) S3PreSigned(c echo.Context) error {
 		return FailResp(c, ParamError)
 	}
 
-	if err := f.base.db.First(&sysConfig).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+	if err := f.base.db.First(&sysConfig).Error; err != nil {
 		return FailResp(c, Fail)
 	}
 
@@ -309,30 +337,12 @@ func (f FileHandler) S3PreSigned(c echo.Context) error {
 		return FailRespWithMsg(c, Fail, err.Error())
 	}
 
-	cfg, err := config.LoadDefaultConfig(
-		context.TODO(),
-		config.WithRegion(sysConfigVo.S3.Region),
-		config.WithEndpointResolver(
-			aws.EndpointResolverFunc(
-				func(service, region string) (aws.Endpoint, error) {
-					return aws.Endpoint{URL: sysConfigVo.S3.Endpoint}, nil
-				},
-			),
-		),
-		config.WithCredentialsProvider(
-			credentials.NewStaticCredentialsProvider(
-				sysConfigVo.S3.AccessKey,
-				sysConfigVo.S3.SecretKey,
-				"",
-			),
-		),
-	)
+	client, err := newS3Client(c.Request().Context(), sysConfigVo.S3)
 	if err != nil {
 		f.base.log.Error().Msgf("无法加载SDK配置, %s", err)
 		return FailRespWithMsg(c, Fail, err.Error())
 	}
 
-	client := s3.NewFromConfig(cfg)
 	presignedClient := s3.NewPresignClient(client)
 
 	key := fmt.Sprintf(
@@ -341,7 +351,7 @@ func (f FileHandler) S3PreSigned(c echo.Context) error {
 		strings.ReplaceAll(uuid.NewString(), "-", ""),
 	)
 	presignedResult, err := presignedClient.PresignPutObject(
-		context.TODO(),
+		c.Request().Context(),
 		&s3.PutObjectInput{
 			Bucket:      aws.String(sysConfigVo.S3.Bucket),
 			Key:         aws.String(key),
