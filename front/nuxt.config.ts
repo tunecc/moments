@@ -39,12 +39,9 @@ export default defineNuxtConfig({
                 { charset: "utf-8" },
                 { name: "color-scheme", content: "light dark" },
             ],
-            link: [
-                {href: `/css/APlayer.min.css`, rel: 'stylesheet'},
-            ],
             script: [
-                {src: `/js/APlayer.min.js`, type: 'text/javascript', async: true, defer: true},
-                {src: `/js/Meting.min.js`, type: 'text/javascript', async: true, defer: true},
+                // APlayer/Meting 改为在 MusicPreview 组件挂载时按需注入,
+                // 不再全局加载;main.js 提供全页通用的代码块复制功能,保留。
                 {src: `/js/main.js`, type: 'text/javascript', async: true, defer: true},
             ]
         }
