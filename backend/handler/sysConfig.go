@@ -34,8 +34,11 @@ func (s SysConfigHandler) GetConfig(c echo.Context) error {
 		result vo.SysConfigVO
 	)
 
-	if err := s.base.db.First(&config).Error; errors.Is(err, gorm.ErrRecordNotFound) {
-		return SuccessResp(c, h{})
+	if err := s.base.db.First(&config).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return SuccessResp(c, h{})
+		}
+		return FailRespWithMsg(c, Fail, "读取系统配置异常")
 	}
 	err := json.Unmarshal([]byte(config.Content), &result)
 	if err != nil {
@@ -72,8 +75,11 @@ func (s SysConfigHandler) GetFullConfig(c echo.Context) error {
 	if currentUser == nil || currentUser.Id != 1 {
 		return FailRespWithMsg(c, Fail, "需要先登录")
 	}
-	if err := s.base.db.First(&config).Error; errors.Is(err, gorm.ErrRecordNotFound) {
-		return SuccessResp(c, h{})
+	if err := s.base.db.First(&config).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return SuccessResp(c, h{})
+		}
+		return FailRespWithMsg(c, Fail, "读取系统配置异常")
 	}
 	err := json.Unmarshal([]byte(config.Content), &result)
 	if err != nil {
@@ -115,17 +121,27 @@ func (s SysConfigHandler) SaveConfig(c echo.Context) error {
 		return FailRespWithMsg(c, Fail, "读取系统配置异常")
 	}
 
-	if err := s.base.db.First(&config).Error; errors.Is(err, gorm.ErrRecordNotFound) {
-		config.Content = string(data)
-		if err = s.base.db.Save(&config).Error; err != nil {
-			return FailRespWithMsg(c, Fail, "保存系统配置异常")
-		}
-	} else {
-		config.Content = string(data)
-		if err = s.base.db.Updates(&config).Error; err != nil {
-			return FailRespWithMsg(c, Fail, "保存系统配置异常")
-		}
+	// 读取已有配置:NotFound 表示首次保存(新建),其它错误视为真正的读取失败
+	existing := s.base.db.First(&config).Error
+	if existing != nil && !errors.Is(existing, gorm.ErrRecordNotFound) {
+		return FailRespWithMsg(c, Fail, "读取系统配置异常")
 	}
-	s.base.db.Table("User").Where("id=?", 1).Update("username", result.AdminUserName)
+	config.Content = string(data)
+
+	// 配置保存与管理员用户名更新需要原子化,避免中途失败导致不一致
+	if err := s.base.db.Transaction(func(tx *gorm.DB) error {
+		if errors.Is(existing, gorm.ErrRecordNotFound) {
+			if err := tx.Save(&config).Error; err != nil {
+				return err
+			}
+		} else {
+			if err := tx.Updates(&config).Error; err != nil {
+				return err
+			}
+		}
+		return tx.Table("User").Where("id=?", 1).Update("username", result.AdminUserName).Error
+	}); err != nil {
+		return FailRespWithMsg(c, Fail, "保存系统配置异常")
+	}
 	return SuccessResp(c, h{})
 }

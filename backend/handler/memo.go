@@ -790,8 +790,11 @@ func (m MemoHandler) GetDoubanBookInfo(c echo.Context) error {
 		re          = regexp.MustCompile(`\d{4}-\d{1,2}(-\d{1,2})?`)
 		userAgent   = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3"
 	)
-	if err := m.base.db.First(&sysConfig).Error; errors.Is(err, gorm.ErrRecordNotFound) {
-		return FailRespWithMsg(c, Fail, "系统配置为空")
+	if err := m.base.db.First(&sysConfig).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return FailRespWithMsg(c, Fail, "系统配置为空")
+		}
+		return FailRespWithMsg(c, Fail, "读取系统配置异常")
 	}
 	err := json.Unmarshal([]byte(sysConfig.Content), &sysConfigVo)
 	if err != nil {

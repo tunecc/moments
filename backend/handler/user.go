@@ -90,7 +90,9 @@ func (u UserHandler) Reg(c echo.Context) error {
 	)
 
 	u.base.db.First(&sysConfig)
-	_ = json.Unmarshal([]byte(sysConfig.Content), &sysConfigVO)
+	if err := json.Unmarshal([]byte(sysConfig.Content), &sysConfigVO); err != nil {
+		u.base.log.Error().Msgf("系统配置反序列化失败: %s", err)
+	}
 
 	if !sysConfigVO.EnableRegister {
 		return FailRespWithMsg(c, Fail, "当前未开启注册用户")

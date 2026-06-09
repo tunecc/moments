@@ -19,7 +19,6 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/rs/zerolog"
 	"github.com/samber/do/v2"
-	"gorm.io/gorm"
 )
 
 type CommentHandler struct {
@@ -51,10 +50,10 @@ func (c CommentHandler) RemoveComment(ctx echo.Context) error {
 		comment db.Comment
 		memo    db.Memo
 	)
-	if err = c.base.db.First(&comment, id).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+	if err = c.base.db.First(&comment, id).Error; err != nil {
 		return FailResp(ctx, ParamError)
 	}
-	if err = c.base.db.First(&memo, comment.MemoId).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+	if err = c.base.db.First(&memo, comment.MemoId).Error; err != nil {
 		return FailResp(ctx, ParamError)
 	}
 
@@ -133,7 +132,9 @@ func (c CommentHandler) AddComment(ctx echo.Context) error {
 		return FailResp(ctx, ParamError)
 	}
 	c.base.db.First(&sysConfig)
-	_ = json.Unmarshal([]byte(sysConfig.Content), &sysConfigVO)
+	if err := json.Unmarshal([]byte(sysConfig.Content), &sysConfigVO); err != nil {
+		c.base.log.Error().Msgf("系统配置反序列化失败: %s", err)
+	}
 
 	if !sysConfigVO.EnableComment {
 		return FailRespWithMsg(ctx, Fail, "评论未开启")
@@ -223,7 +224,9 @@ func (c CommentHandler) commentEmailNotification(comment db.Comment, host string
 	c.base.db.First(&memo, comment.MemoId)
 	c.base.db.First(&user, memo.UserId)
 	c.base.db.First(&sysConfig)
-	_ = json.Unmarshal([]byte(sysConfig.Content), &sysConfigVO)
+	if err := json.Unmarshal([]byte(sysConfig.Content), &sysConfigVO); err != nil {
+		c.base.log.Error().Msgf("系统配置反序列化失败: %s", err)
+	}
 
 	// 未开启邮件通知
 	if !sysConfigVO.EnableEmail {

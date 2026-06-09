@@ -17,3 +17,7 @@ logs
 upload
 *.sqlite
 moments.exe
+
+# vibe 运行时产物
+outputs/
+.vibeskills/

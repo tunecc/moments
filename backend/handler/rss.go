@@ -53,7 +53,9 @@ func (r RssHandler) generateRss(host string) (string, error) {
 
 	// 获取系统设置
 	r.base.db.First(&sysConfig)
-	_ = json.Unmarshal([]byte(sysConfig.Content), &sysConfigVO)
+	if err := json.Unmarshal([]byte(sysConfig.Content), &sysConfigVO); err != nil {
+		r.base.log.Error().Msgf("RSS 读取系统配置反序列化失败: %s", err)
+	}
 
 	// 获取管理员信息
 	r.base.db.First(&user, "Username = ?", "admin")
@@ -70,7 +72,7 @@ func (r RssHandler) generateRss(host string) (string, error) {
 	tx.Order("createdAt desc").Limit(15).Find(&memos)
 
 	for i := range memos {
-		if *memos[i].Pinned {
+		if memos[i].Pinned != nil && *memos[i].Pinned {
 			memos[i].Content = "**【置顶】**\n" + memos[i].Content
 		}
 	}

@@ -119,6 +119,9 @@ func migrateTo3(tx *gorm.DB, log zerolog.Logger) {
 				log.Warn().Msgf("memo id:%d ext属性不是标准的json格式 => %s,忽略..", memo.Id, memo.Ext)
 				continue
 			}
+			// 注意:这是一次性历史数据迁移,videoUrl 与 localVideoUrl 在新模型里
+			// 都归一为 "online" 类型(都按可直接播放的地址处理),不做区分。
+			// 该逻辑可能已在既有生产库执行过,改变映射会与已迁移数据不一致,故保持原状。
 			if value, exist := extMap["videoUrl"]; exist && value != "" {
 				ext.Video.Type = "online"
 				ext.Video.Value = value.(string)
@@ -175,6 +178,8 @@ func migrateTo3(tx *gorm.DB, log zerolog.Logger) {
 			}
 
 			if err = tx.Save(&memo).Error; err != nil {
+				log.Error().Msgf("迁移memo id:%d 失败:%s", memo.Id, err)
+			} else {
 				log.Info().Msgf("迁移memo id:%d 成功", memo.Id)
 			}
 
@@ -182,29 +187,35 @@ func migrateTo3(tx *gorm.DB, log zerolog.Logger) {
 	}
 
 	// 修复之前版本的时间格式问题
-	tx.Exec(`UPDATE memo
-SET 
+	if err := tx.Exec(`UPDATE memo
+SET
     createdAt = datetime(createdAt / 1000, 'unixepoch'),
     updatedAt = datetime(updatedAt / 1000, 'unixepoch')
-WHERE 
-    ((createdAt NOT LIKE '%-%' AND length(createdAt) = 13) OR 
-    (updatedAt NOT LIKE '%-%' AND length(updatedAt) = 13))`)
+WHERE
+    ((createdAt NOT LIKE '%-%' AND length(createdAt) = 13) OR
+    (updatedAt NOT LIKE '%-%' AND length(updatedAt) = 13))`).Error; err != nil {
+		log.Error().Msgf("修复 memo 时间格式失败:%s", err)
+	}
 
-	tx.Exec(`UPDATE comment
-SET 
+	if err := tx.Exec(`UPDATE comment
+SET
     createdAt = datetime(createdAt / 1000, 'unixepoch'),
     updatedAt = datetime(updatedAt / 1000, 'unixepoch')
-WHERE 
-    ((createdAt NOT LIKE '%-%' AND length(createdAt) = 13) OR 
-    (updatedAt NOT LIKE '%-%' AND length(updatedAt) = 13))`)
+WHERE
+    ((createdAt NOT LIKE '%-%' AND length(createdAt) = 13) OR
+    (updatedAt NOT LIKE '%-%' AND length(updatedAt) = 13))`).Error; err != nil {
+		log.Error().Msgf("修复 comment 时间格式失败:%s", err)
+	}
 
-	tx.Exec(`UPDATE user
-SET 
+	if err := tx.Exec(`UPDATE user
+SET
     createdAt = datetime(createdAt / 1000, 'unixepoch'),
     updatedAt = datetime(updatedAt / 1000, 'unixepoch')
-WHERE 
-    ((createdAt NOT LIKE '%-%' AND length(createdAt) = 13) OR 
-    (updatedAt NOT LIKE '%-%' AND length(updatedAt) = 13))`)
+WHERE
+    ((createdAt NOT LIKE '%-%' AND length(createdAt) = 13) OR
+    (updatedAt NOT LIKE '%-%' AND length(updatedAt) = 13))`).Error; err != nil {
+		log.Error().Msgf("修复 user 时间格式失败:%s", err)
+	}
 }
 
 func migrateIframeVideoUrl(tx *gorm.DB, log zerolog.Logger) {
