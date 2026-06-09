@@ -13,9 +13,9 @@ type Comment struct {
 	Email      string `gorm:"column:email" json:"email,omitempty"`
 	Website    string `gorm:"column:website" json:"website,omitempty"`
 
-	CreatedAt *time.Time `gorm:"column:createdAt;default:CURRENT_TIMESTAMP;NOT NULL" json:"createdAt,omitempty"`
+	CreatedAt *time.Time `gorm:"column:createdAt;default:CURRENT_TIMESTAMP;NOT NULL;index:idx_comment_memoId_createdAt,priority:2" json:"createdAt,omitempty"`
 	UpdatedAt *time.Time `gorm:"column:updatedAt;NOT NULL" json:"updatedAt,omitempty"`
-	MemoId    int32      `gorm:"column:memoId;NOT NULL" json:"memoId,omitempty"`
+	MemoId    int32      `gorm:"column:memoId;NOT NULL;index:idx_comment_memoId_createdAt,priority:1" json:"memoId,omitempty"`
 	Author    string     `gorm:"column:author" json:"author,omitempty"`
 	Memo      *Memo      `json:"memo,omitempty"`
 }
